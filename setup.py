@@ -92,6 +92,7 @@ setup(
     gunicorn=gunicorn.app.wsgiapp:run
     gunicorn_django=gunicorn.app.djangoapp:run
     gunicorn_paster=gunicorn.app.pasterapp:run
+    gunicorn_thrift=gunicorn.app.thriftapp:run
 
     [paste.server_runner]
     main=gunicorn.app.pasterapp:paste_server
