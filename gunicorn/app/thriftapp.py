@@ -2,7 +2,7 @@
 import os
 import sys
 
-from gunicorn.errors import ConfigError
+from gunicorn.errors import ConfigError, AppImportError
 from gunicorn.app.base import Application
 from gunicorn import util
 
@@ -46,7 +46,38 @@ class ThriftApplication(Application):
         self.chdir()
 
         # load the app
-        return util.import_app(self.app_uri)
+        return self._import_app(self.app_uri)
+
+    def _import_app(self, module):
+        """fork from gunicorn.until.import_app.
+        thrift app is not callable,delete callable test.
+        """
+        parts = module.split(":", 1)
+        if len(parts) == 1:
+            module, obj = module, "application"
+        else:
+            module, obj = parts[0], parts[1]
+
+        try:
+            __import__(module)
+        except ImportError:
+            if module.endswith(".py") and os.path.exists(module):
+                raise ImportError("Failed to find application, did "
+                    "you mean '%s:%s'?" % (module.rsplit(".", 1)[0], obj))
+            else:
+                raise
+
+        mod = sys.modules[module]
+
+        try:
+            app = eval(obj, mod.__dict__)
+        except NameError:
+            raise AppImportError("Failed to find application: %r" % module)
+
+        if app is None:
+            raise AppImportError("Failed to find application object: %r" % obj)
+        return app
+
 
     def load_pasteapp(self):
         self.chdir()
@@ -63,8 +94,6 @@ class ThriftApplication(Application):
 
     def load(self):
         app = self._load()
-        if not callable(app):
-            app.__call__ = 1
         return app
 
 
