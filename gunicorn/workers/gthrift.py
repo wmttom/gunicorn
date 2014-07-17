@@ -24,9 +24,10 @@ from gevent.socket import wait_write, socket
 import gunicorn
 from gunicorn.workers.async import AsyncWorker
 
-from thrift.transport import TTransport
-from thrift.protocol import TBinaryProtocol
-from gevent_thrift.server import ThriftServer
+from gunicorn.thrift.transport import TTransport
+from gunicorn.thrift.protocol import TBinaryProtocol
+from gunicorn.thrift.transport.TTransport import TFileObjectTransport
+
 
 VERSION = "gevent/%s gunicorn/%s" % (gevent.__version__, gunicorn.__version__)
 
@@ -74,7 +75,7 @@ class ThriftWorker(AsyncWorker):
             tfactory = TTransport.TTransportFactoryBase()
             pfactory = TBinaryProtocol.TBinaryProtocolFactory()
             server = ThriftServer(self.log, s, self.wsgi, tfactory, tfactory, pfactory, pfactory)
-            server.start()
+            server.serve_forever(self.cfg.timeout)
             servers.append(server)
 
         try:
@@ -157,3 +158,41 @@ class ThriftWorker(AsyncWorker):
 
             # then initialize the process
             super(ThriftWorker, self).init_process()
+
+
+class ThriftServer(StreamServer):
+    """Thrift server based on StreamServer."""
+
+    def __init__(self, log, listener, processor, inputTransportFactory=None,
+                 outputTransportFactory=None, inputProtocolFactory=None,
+                 outputProtocolFactory=None, **kwargs):
+        StreamServer.__init__(self, listener, self._process_socket, **kwargs)
+        self.log = log
+        self.processor = processor
+        self.inputTransportFactory = (inputTransportFactory
+            or TTransport.TFramedTransportFactory())
+        self.outputTransportFactory = (outputTransportFactory
+            or TTransport.TFramedTransportFactory())
+        self.inputProtocolFactory = (inputProtocolFactory
+            or TBinaryProtocol.TBinaryProtocolFactory())
+        self.outputProtocolFactory = (outputProtocolFactory
+            or TBinaryProtocol.TBinaryProtocolFactory())
+
+    def _process_socket(self, client, address):
+        """A greenlet for handling a single client."""
+        client = TFileObjectTransport(client.makefile())
+        itrans = self.inputTransportFactory.getTransport(client)
+        otrans = self.outputTransportFactory.getTransport(client)
+        iprot = self.inputProtocolFactory.getProtocol(itrans)
+        oprot = self.outputProtocolFactory.getProtocol(otrans)
+        try:
+            while True:
+                self.processor.process(iprot, oprot)
+        except EOFError:
+            pass
+        except Exception:
+            self.log.exception(
+                "caught exception while processing thrift request")
+
+        itrans.close()
+        otrans.close()
