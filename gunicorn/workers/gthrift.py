@@ -20,6 +20,7 @@ except ImportError:
 from gevent.pool import Pool
 from gevent.server import StreamServer
 from gevent.socket import wait_write, socket
+from gevent.timeout import Timeout
 
 import gunicorn
 from gunicorn.workers.async import AsyncWorker
@@ -74,8 +75,8 @@ class ThriftWorker(AsyncWorker):
             pool = Pool(self.worker_connections)
             tfactory = TTransport.TTransportFactoryBase()
             pfactory = TBinaryProtocol.TBinaryProtocolFactory()
-            server = ThriftServer(self.log, s, self.wsgi, tfactory, tfactory, pfactory, pfactory)
-            server.serve_forever(self.cfg.timeout)
+            server = ThriftServer(self.log, s, self.wsgi, tfactory, tfactory, pfactory, pfactory, self.cfg.timeout)
+            server.start()
             servers.append(server)
 
         try:
@@ -165,9 +166,10 @@ class ThriftServer(StreamServer):
 
     def __init__(self, log, listener, processor, inputTransportFactory=None,
                  outputTransportFactory=None, inputProtocolFactory=None,
-                 outputProtocolFactory=None, **kwargs):
+                 outputProtocolFactory=None, timeout=30, **kwargs):
         StreamServer.__init__(self, listener, self._process_socket, **kwargs)
         self.log = log
+        self.timeout = timeout
         self.processor = processor
         self.inputTransportFactory = (inputTransportFactory
             or TTransport.TFramedTransportFactory())
@@ -180,6 +182,8 @@ class ThriftServer(StreamServer):
 
     def _process_socket(self, client, address):
         """A greenlet for handling a single client."""
+        timeout = gevent.Timeout(self.timeout, False)
+        timeout.start()
         client = TFileObjectTransport(client.makefile())
         itrans = self.inputTransportFactory.getTransport(client)
         otrans = self.outputTransportFactory.getTransport(client)
@@ -188,11 +192,15 @@ class ThriftServer(StreamServer):
         try:
             while True:
                 self.processor.process(iprot, oprot)
+        except Timeout:
+            self._timeout_log()
         except EOFError:
             pass
         except Exception:
             self.log.exception(
                 "caught exception while processing thrift request")
-
         itrans.close()
         otrans.close()
+
+    def _timeout_log(self):
+        self.log.error("a greenlet timeout.")
