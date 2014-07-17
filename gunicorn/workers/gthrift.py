@@ -20,7 +20,7 @@ except ImportError:
 from gevent.pool import Pool
 from gevent.server import StreamServer
 from gevent.socket import wait_write, socket
-from gevent.timeout import Timeout
+from gevent.timeout import Timeout, with_timeout
 
 import gunicorn
 from gunicorn.workers.async import AsyncWorker
@@ -183,7 +183,6 @@ class ThriftServer(StreamServer):
     def _process_socket(self, client, address):
         """A greenlet for handling a single client."""
         timeout = gevent.Timeout(self.timeout, False)
-        timeout.start()
         client = TFileObjectTransport(client.makefile())
         itrans = self.inputTransportFactory.getTransport(client)
         otrans = self.outputTransportFactory.getTransport(client)
@@ -191,7 +190,7 @@ class ThriftServer(StreamServer):
         oprot = self.outputProtocolFactory.getProtocol(otrans)
         try:
             while True:
-                self.processor.process(iprot, oprot)
+                with_timeout(self.timeout, self.processor.process, iprot, oprot)
         except Timeout:
             self._timeout_log()
         except EOFError:
