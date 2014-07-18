@@ -6,6 +6,7 @@ import sys
 from datetime import datetime
 from functools import partial
 import time
+import traceback
 
 _socket = __import__("socket")
 
@@ -28,6 +29,7 @@ from gunicorn.workers.async import AsyncWorker
 from gunicorn.thrift.transport import TTransport
 from gunicorn.thrift.protocol import TBinaryProtocol
 from gunicorn.thrift.transport.TTransport import TFileObjectTransport
+from gunicorn.thrift.Thrift import TApplicationException
 
 
 VERSION = "gevent/%s gunicorn/%s" % (gevent.__version__, gunicorn.__version__)
@@ -75,7 +77,7 @@ class ThriftWorker(AsyncWorker):
             pool = Pool(self.worker_connections)
             tfactory = TTransport.TTransportFactoryBase()
             pfactory = TBinaryProtocol.TBinaryProtocolFactory()
-            server = ThriftServer(self.log, s, self.wsgi, tfactory, tfactory, pfactory, pfactory, self.cfg.timeout)
+            server = ThriftServer(self.log, pool, self.cfg.backlog, s, self.wsgi, tfactory, tfactory, pfactory, pfactory, self.cfg.timeout)
             server.start()
             servers.append(server)
 
@@ -164,13 +166,13 @@ class ThriftWorker(AsyncWorker):
 class ThriftServer(StreamServer):
     """Thrift server based on StreamServer."""
 
-    def __init__(self, log, listener, processor, inputTransportFactory=None,
+    def __init__(self, log, pool, backlog, listener, processor, inputTransportFactory=None,
                  outputTransportFactory=None, inputProtocolFactory=None,
                  outputProtocolFactory=None, timeout=30, **kwargs):
-        StreamServer.__init__(self, listener, self._process_socket, **kwargs)
+        StreamServer.__init__(self, listener, self._process_socket, None, pool, **kwargs)
         self.log = log
         self.timeout = timeout
-        self.processor = processor
+        self.processor = self.wrapper_processor_class(processor)
         self.inputTransportFactory = (inputTransportFactory
             or TTransport.TFramedTransportFactory())
         self.outputTransportFactory = (outputTransportFactory
@@ -182,7 +184,6 @@ class ThriftServer(StreamServer):
 
     def _process_socket(self, client, address):
         """A greenlet for handling a single client."""
-        timeout = gevent.Timeout(self.timeout, False)
         client = TFileObjectTransport(client.makefile())
         itrans = self.inputTransportFactory.getTransport(client)
         otrans = self.outputTransportFactory.getTransport(client)
@@ -190,16 +191,45 @@ class ThriftServer(StreamServer):
         oprot = self.outputProtocolFactory.getProtocol(otrans)
         try:
             while True:
-                with_timeout(self.timeout, self.processor.process, iprot, oprot)
-        except Timeout:
-            self._timeout_log()
+                name, status, finish, err = self.processor.process(iprot, oprot, self.timeout)
+                self.log.access(address, name, status, finish)
+                if status != 200:
+                    self.log.error(err)
+                    raise Exception(err)
         except EOFError:
             pass
-        except Exception:
-            self.log.exception(
-                "caught exception while processing thrift request")
+        except Exception, ex:
+            pass
         itrans.close()
         otrans.close()
 
-    def _timeout_log(self):
-        self.log.error("a greenlet timeout.")
+    def wrapper_processor_class(self, processor):
+        processor.__class__.process = process
+        return processor
+
+
+def process(self, iprot, oprot, timeout):
+    (name, type, seqid) = iprot.readMessageBegin()
+    begin_ts = time.time()
+    try:
+        timeout_con = Timeout(timeout, Timeout)
+        timeout_con.start()
+        if name not in self._processMap:
+            iprot.skip(TType.STRUCT)
+            iprot.readMessageEnd()
+            x = TApplicationException(
+                TApplicationException.UNKNOWN_METHOD, 'Unknown function %s' % (name))
+            oprot.writeMessageBegin(name, TMessageType.EXCEPTION, seqid)
+            x.write(oprot)
+            oprot.writeMessageEnd()
+            oprot.trans.flush()
+            result = (name, 404, time.time() - begin_ts, 'Unknown function %s' % (name))
+        else:
+            self._processMap[name](self, seqid, iprot, oprot)
+            result = (name, 200, time.time() - begin_ts, None)
+        timeout_con.cancel()
+        return result
+    except Timeout, ex:
+        return (name, 504, time.time() - begin_ts, "A greenlet process timeout.")
+    except Exception, ex:
+        return (name, 500, time.time() - begin_ts, str(ex) + traceback.format_exc())
