@@ -4,48 +4,49 @@ import traceback
 import os
 import logging
 
+from gunicorn import util
 from gunicorn.glogging import Logger
 
 class RotatingFileLogger(Logger):
     """Logger class,add Rotating RotatingFileHandler, default 100MB."""
     def _set_handler(self, log, output, fmt):
-    # remove previous gunicorn log handler
-    h = self._get_gunicorn_handler(log)
-    if h:
-        log.handlers.remove(h)
-    if output is not None:
-        if output == "-":
-            h = logging.StreamHandler()
-        else:
-            util.check_is_writeable(output)
-            if log is self.access_log:
-                h = logging.RotatingFileHandler(output, maxBytes=100 * 1024 * 1024, backupCount=0)
+        # remove previous gunicorn log handler
+        h = self._get_gunicorn_handler(log)
+        if h:
+            log.handlers.remove(h)
+        if output is not None:
+            if output == "-":
+                h = logging.StreamHandler()
             else:
-                h = logging.FileHandler(output)
-        h.setFormatter(fmt)
-        h._gunicorn = True
-        log.addHandler(h)
+                util.check_is_writeable(output)
+                if log is self.access_log:
+                    h = logging.handlers.RotatingFileHandler(output, maxBytes=100 * 1024 * 1024, backupCount=0)
+                else:
+                    h = logging.FileHandler(output)
+            h.setFormatter(fmt)
+            h._gunicorn = True
+            log.addHandler(h)
 
 
 class TimedRotatingFileLogger(Logger):
     """Logger class,add Rotating TimedRotatingFileHandler, default 1 day."""
     def _set_handler(self, log, output, fmt):
-    # remove previous gunicorn log handler
-    h = self._get_gunicorn_handler(log)
-    if h:
-        log.handlers.remove(h)
-    if output is not None:
-        if output == "-":
-            h = logging.StreamHandler()
-        else:
-            util.check_is_writeable(output)
-            if log is self.access_log:
-                h = logging.TimedRotatingFileHandler(output, when="midnight", interval=1, backupCount=0)
+        # remove previous gunicorn log handler
+        h = self._get_gunicorn_handler(log)
+        if h:
+            log.handlers.remove(h)
+        if output is not None:
+            if output == "-":
+                h = logging.StreamHandler()
             else:
-                h = logging.FileHandler(output)
-        h.setFormatter(fmt)
-        h._gunicorn = True
-        log.addHandler(h)
+                util.check_is_writeable(output)
+                if log is self.access_log:
+                    h = logging.handlers.TimedRotatingFileHandler(output, when="midnight", interval=1, backupCount=0)
+                else:
+                    h = logging.FileHandler(output)
+            h.setFormatter(fmt)
+            h._gunicorn = True
+            log.addHandler(h)
 
 
 class ThriftLogger(Logger):
