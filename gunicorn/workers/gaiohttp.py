@@ -47,9 +47,10 @@ class AiohttpWorker(base.Worker):
             proto, proto.connection_lost, self.connections, False)
         return proto
 
-    def factory(self, wsgi, host, port):
+    def factory(self, wsgi, addr):
         proto = WSGIServerHttpProtocol(
-            wsgi, loop=self.loop,
+            wsgi, readpayload=True,
+            loop=self.loop,
             log=self.log,
             debug=self.cfg.debug,
             keep_alive=self.cfg.keepalive,
@@ -57,8 +58,8 @@ class AiohttpWorker(base.Worker):
             access_log_format=self.cfg.access_log_format)
         return self.wrap_protocol(proto)
 
-    def get_factory(self, sock, host, port):
-        return functools.partial(self.factory, self.wsgi, host, port)
+    def get_factory(self, sock, addr):
+        return functools.partial(self.factory, self.wsgi, addr)
 
     @asyncio.coroutine
     def close(self):
@@ -71,7 +72,7 @@ class AiohttpWorker(base.Worker):
     @asyncio.coroutine
     def _run(self):
         for sock in self.sockets:
-            factory = self.get_factory(sock.sock, *sock.cfg_addr)
+            factory = self.get_factory(sock.sock, sock.cfg_addr)
             self.servers.append(
                 (yield from self.loop.create_server(factory, sock=sock.sock)))
 

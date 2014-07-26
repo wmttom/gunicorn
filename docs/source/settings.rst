@@ -18,7 +18,7 @@ config
 * ``-c FILE, --config FILE``
 * ``None``
 
-The path to a Gunicorn config file.
+The path to a Gunicorn config file, or python module.
 
 Only has an effect when specified on the command line or as part of an
 application specific configuration.
@@ -727,7 +727,7 @@ worker_int
         def worker_int(worker):
             pass
 
-Called just after a worker exited on SIGINT or SIGTERM.
+Called just after a worker exited on SIGINT or SIGQUIT.
 
 The callable needs to accept one instance variable for the initialized
 Worker.

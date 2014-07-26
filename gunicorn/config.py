@@ -142,8 +142,13 @@ class Config(object):
         if uri == "simple":
             # support the default
             uri = "gunicorn.glogging.Logger"
-
-        logger_class = util.load_class(uri,
+        
+        # if statsd is on, automagically switch to the statsd logger
+        if 'statsd_host' in self.settings:
+            logger_class = util.load_class("gunicorn.instrument.statsd.Statsd",
+                section="gunicorn.loggers")
+        else:
+            logger_class = util.load_class(uri,
                 default="gunicorn.glogging.Logger",
                 section="gunicorn.loggers")
 
@@ -436,6 +441,15 @@ def validate_file(val):
 
     return path
 
+def validate_hostport(val):
+    val = validate_string(val)
+    if val is None:
+        return None
+    elements = val.split(":")
+    if len(elements) == 2:
+        return (elements[0], int(elements[1]))
+    else:
+        raise TypeError("Value must consist of: hostname:port")
 
 def get_default_config_file():
     config_path = os.path.join(os.path.abspath(os.getcwd()),
@@ -454,7 +468,7 @@ class ConfigFile(Setting):
     validator = validate_string
     default = None
     desc = """\
-        The path to a Gunicorn config file.
+        The path to a Gunicorn config file, or python module.
 
         Only has an effect when specified on the command line or as part of an
         application specific configuration.
@@ -1369,7 +1383,7 @@ class WorkerInt(Setting):
 
     default = staticmethod(worker_int)
     desc = """\
-        Called just after a worker exited on SIGINT or SIGTERM.
+        Called just after a worker exited on SIGINT or SIGQUIT.
 
         The callable needs to accept one instance variable for the initialized
         Worker.
@@ -1625,3 +1639,15 @@ if sys.version_info >= (2, 7):
         desc = """\
         Ciphers to use (see stdlib ssl module's)
         """
+
+# statsD monitoring
+class StatsdHost(Setting):
+    name = "statsd_host"
+    section = "Logging"
+    cli = ["--statsd-host"]
+    meta = "STATSD_ADDR"
+    default = "localhost:8125"
+    validator = validate_hostport
+    desc ="""\
+    host:port of the statsd server to log to
+    """
